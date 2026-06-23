@@ -24,6 +24,7 @@ from .signals.bio_positioning import BioPositioningSignal
 from .signals.activity_burstiness import ActivityBurstinessSignal
 from .signals.related_work import RelatedWorkSignal
 from .signals.contribution_rules import ContributionRulesSignal
+from .signals.diff_credibility import DiffCredibilitySignal
 from .signals.pr_template import PrTemplateSignal
 from .signals.scope_alignment import ScopeAlignmentSignal
 from .signals.pr_body_quality import PrBodyQualitySignal
@@ -61,6 +62,7 @@ _SIGNAL_REGISTRY: list[type[ScoredSignal]] = [
     # Optional LLM-powered (off by default)
     RelatedWorkSignal,
     ContributionRulesSignal,
+    DiffCredibilitySignal,
     PrTemplateSignal,
     ScopeAlignmentSignal,
     PrBodyQualitySignal,

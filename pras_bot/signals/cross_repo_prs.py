@@ -38,8 +38,10 @@ class CrossRepoPRsSignal(ScoredSignal):
         med_max = thresholds.get("med_max", 5)
         high_max = thresholds.get("high_max", 10)
 
+        if count <= 0:
+            return 50.0                    # no public/search-visible PR data yet
         if count <= low_max:
-            return max(0.0, count * 5)       # 0→0, 1→5, 2→10
+            return max(0.0, count * 5)     # 1→5, 2→10
         elif count <= med_max:
             return linear(count, low_max, med_max, 10, 35)
         elif count <= high_max:

@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 from pras_bot.github_client import GitHubAPIError, GitHubClient
+from pras_bot.config_loader import _deep_merge
 from pras_bot.scorer import compute_spam_score, compute_labels_from_score
 from pras_bot.signals.lines_changed import LinesChangedSignal
 from pras_bot.signals.files_changed import FilesChangedSignal
@@ -30,6 +31,7 @@ from pras_bot.signals.bio_positioning import BioPositioningSignal
 from pras_bot.signals.activity_burstiness import ActivityBurstinessSignal
 from pras_bot.signals.related_work import RelatedWorkSignal
 from pras_bot.signals.contribution_rules import ContributionRulesSignal
+from pras_bot.signals.diff_credibility import DiffCredibilitySignal
 from pras_bot.signals.pr_template import PrTemplateSignal
 from pras_bot.signals.scope_alignment import ScopeAlignmentSignal
 from pras_bot.signals.pr_body_quality import PrBodyQualitySignal
@@ -129,6 +131,17 @@ class TestLabels:
         assert compute_labels_from_score(10, DEFAULT_CONFIG)["name"] == "looks-good"
 
 
+class TestConfigMerge:
+    def test_deep_merge_does_not_mutate_inputs(self):
+        base = {"a": {"b": 1}, "c": [1]}
+        override = {"a": {"d": 2}, "c": [2]}
+        merged = _deep_merge(base, override)
+
+        assert merged == {"a": {"b": 1, "d": 2}, "c": [2]}
+        assert base == {"a": {"b": 1}, "c": [1]}
+        assert override == {"a": {"d": 2}, "c": [2]}
+
+
 # ---------------------------------------------------------------------------
 # signal unit tests (pure logic, no API calls)
 # ---------------------------------------------------------------------------
@@ -203,6 +216,12 @@ class TestAccountAge:
 
 
 class TestCrossRepoPRs:
+    def test_zero_prs_is_neutral_no_history(self):
+        gh = MockGH(cross_repo_count=0)
+        pr = {"user": {"login": "new-dev"}}
+        sig = CrossRepoPRsSignal(gh, DEFAULT_CONFIG, pr)
+        assert sig.score() == 50.0
+
     def test_few_prs(self):
         gh = MockGH(cross_repo_count=1)
         pr = {"user": {"login": "normal-dev"}}
@@ -241,6 +260,7 @@ class TestSignalNames:
             ActivityBurstinessSignal,
             RelatedWorkSignal,
             ContributionRulesSignal,
+            DiffCredibilitySignal,
             PrTemplateSignal,
             ScopeAlignmentSignal,
             PrBodyQualitySignal,
@@ -342,6 +362,46 @@ class TestSearchUrlEncoding:
         assert "needs%20review" in get_url
 
 
+class TestGitHubClientPagination:
+    def test_fetch_pr_files_paginates_past_100(self, monkeypatch):
+        captured: list[str] = []
+
+        def fake_urlopen(req, timeout=None):
+            from urllib.parse import parse_qs, urlparse
+            captured.append(req.full_url)
+            page = parse_qs(urlparse(req.full_url).query)["page"][0]
+            if page == "1":
+                return _json_resp([{"filename": f"f{i}.py"} for i in range(100)])
+            return _json_resp([{"filename": "f100.py"}])
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        gh = GitHubClient("tok", "o", "r", 1, None, {})
+        files = gh.fetch_pr_files()
+
+        assert len(files) == 101
+        assert "per_page=100&page=1" in captured[0]
+        assert "per_page=100&page=2" in captured[1]
+
+    def test_fetch_pr_commits_paginates_past_100(self, monkeypatch):
+        captured: list[str] = []
+
+        def fake_urlopen(req, timeout=None):
+            from urllib.parse import parse_qs, urlparse
+            captured.append(req.full_url)
+            page = parse_qs(urlparse(req.full_url).query)["page"][0]
+            if page == "1":
+                return _json_resp([{"sha": str(i)} for i in range(100)])
+            return _json_resp([{"sha": "100"}])
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        gh = GitHubClient("tok", "o", "r", 1, None, {})
+        commits = gh.fetch_pr_commits()
+
+        assert len(commits) == 101
+        assert "per_page=100&page=1" in captured[0]
+        assert "per_page=100&page=2" in captured[1]
+
+
 # ---------------------------------------------------------------------------
 # contributor-trust signal tests
 # ---------------------------------------------------------------------------
@@ -367,6 +427,7 @@ class TrustMockGH:
         self.repo_info: dict = {"description": "", "language": "", "topics": []}
         self.contributing_text: str | None = None
         self.llm_response: str = '{"score": 50}'
+        self.llm_prompts: list[str] = []
         # repo-fit / maintainer-burden mock data
         self.file_texts: dict = {}            # path → text (None = missing)
         self.pr_files: list[dict] = []
@@ -400,6 +461,7 @@ class TrustMockGH:
         return self.file_last_commit.get(path, "")
 
     def llm_judge(self, prompt, system=None):
+        self.llm_prompts.append(prompt)
         return self.llm_response
 
     def fetch_user_profile(self, username):
@@ -535,7 +597,7 @@ class TestDuplicatePRTitles:
     def test_too_few_prs(self):
         gh = TrustMockGH(recent_titles=["only one"])
         sig = DuplicatePRTitlesSignal(gh, DEFAULT_CONFIG, {"user": {"login": "x"}})
-        assert sig.score() == 0.0
+        assert sig.score() == 50.0
 
 
 class TestBioPositioning:
@@ -678,6 +740,10 @@ class _FakeResp:
         return self._payload
 
 
+def _json_resp(payload):
+    return _FakeResp(json.dumps(payload).encode())
+
+
 class TestLLMJudge:
     def test_returns_assistant_content_and_uses_config(self, monkeypatch):
         captured: dict = {}
@@ -695,7 +761,23 @@ class TestLLMJudge:
         body = json.loads(captured["req"].data)
         assert body["model"] == "m"
         assert body["temperature"] == 0.0
+        assert body["max_tokens"] == 5000
         assert body["messages"] == [{"role": "user", "content": "hi"}]
+
+    def test_prompt_is_capped_but_tail_instruction_survives(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["data"] = json.loads(req.data)
+            return _json_resp({"choices": [{"message": {"content": "ok"}}]})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        gh = GitHubClient("tok", "o", "r", 1, None, {"max_input_tokens": 30})
+        prompt = "a" * 200 + "RETURN JSON"
+        gh.llm_judge(prompt)
+        sent = captured["data"]["messages"][0]["content"]
+        assert len(sent) <= 120
+        assert "RETURN JSON" in sent
 
     def test_system_message_prepended(self, monkeypatch):
         captured: dict = {}
@@ -864,6 +946,67 @@ class TestContributionRules:
         sig = ContributionRulesSignal(gh, _cfg_rules("llm", llm=True), self.PR)
         assert sig.score() == 25.0
 
+    def test_llm_prompt_includes_bounded_patch_context(self):
+        gh = TrustMockGH(
+            contributing_text="All public functions need type hints.",
+            pr_files=[
+                {"filename": "src/a.py", "status": "modified", "additions": 5, "deletions": 1,
+                 "patch": "@@ def add(a, b):\n+def add(a: int, b: int) -> int:"},
+            ],
+            llm_response='{"score": 10}',
+        )
+        sig = ContributionRulesSignal(gh, _cfg_rules("llm", llm=True), self.PR)
+        assert sig.score() == 10.0
+        assert "Selected PR patches" in gh.llm_prompts[-1]
+        assert "src/a.py" in gh.llm_prompts[-1]
+
+
+def _cfg_diff(provider, llm=False, **overrides):
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg.setdefault("signals", {}).setdefault("diff_credibility", {})["provider"] = provider
+    cfg.setdefault("llm", {})["enabled"] = llm
+    cfg["signals"]["diff_credibility"].update(overrides)
+    return cfg
+
+
+class TestDiffCredibility:
+    PR = {"title": "Improve router performance", "body": "Speeds up route lookup."}
+
+    def test_off_is_skipped(self):
+        sig = DiffCredibilitySignal(TrustMockGH(), _cfg_diff("off"), self.PR)
+        assert sig.score() is None
+
+    def test_non_llm_unsupported_is_skipped(self):
+        sig = DiffCredibilitySignal(TrustMockGH(), _cfg_diff("non_llm", llm=False), self.PR)
+        assert sig.score() is None
+
+    def test_no_patch_context_is_skipped(self):
+        sig = DiffCredibilitySignal(TrustMockGH(pr_files=[{"filename": "image.png"}]),
+                                    _cfg_diff("llm", llm=True), self.PR)
+        assert sig.score() is None
+
+    def test_llm_uses_top_addition_patches_and_parses_score(self):
+        gh = TrustMockGH(
+            pr_files=[
+                {"filename": "small.py", "status": "modified", "additions": 1, "deletions": 0,
+                 "patch": "@@ small"},
+                {"filename": "large.py", "status": "modified", "additions": 10, "deletions": 2,
+                 "patch": "@@ large"},
+                {"filename": "medium.py", "status": "modified", "additions": 5, "deletions": 1,
+                 "patch": "@@ medium"},
+                {"filename": "tiny.py", "status": "modified", "additions": 0, "deletions": 1,
+                 "patch": "@@ tiny"},
+            ],
+            llm_response='{"score": 77}',
+        )
+        sig = DiffCredibilitySignal(gh, _cfg_diff("llm", llm=True), self.PR)
+        assert sig.score() == 77.0
+        prompt = gh.llm_prompts[-1]
+        assert "large.py" in prompt
+        assert "medium.py" in prompt
+        assert "small.py" in prompt
+        assert "tiny.py" not in prompt
+
 
 # ---------------------------------------------------------------------------
 # repo-fit & maintainer-burden signals
@@ -1015,6 +1158,20 @@ class TestScopeAlignment:
         )
         sig = ScopeAlignmentSignal(gh, _cfg_scope("llm", llm=True), {"title": "x", "body": ""})
         assert sig.score() == 20.0
+
+    def test_llm_prompt_includes_patch_context(self):
+        gh = TrustMockGH(
+            file_texts={"ROADMAP.md": "build a web framework"},
+            pr_files=[
+                {"filename": "src/router.py", "status": "modified", "additions": 4, "deletions": 1,
+                 "patch": "@@ class Router:\n+    def route(self): pass"},
+            ],
+            llm_response='{"score": 20}',
+        )
+        sig = ScopeAlignmentSignal(gh, _cfg_scope("llm", llm=True), {"title": "router", "body": ""})
+        assert sig.score() == 20.0
+        assert "Selected PR patches" in gh.llm_prompts[-1]
+        assert "src/router.py" in gh.llm_prompts[-1]
 
 
 # ---- pr_body_quality ------------------------------------------------------
@@ -1334,7 +1491,15 @@ class TestSignoff:
             {"commit": {"message": "no signoff here"}},
         ])
         sig = SignoffSignal(gh, _cfg_signoff(True), {})
-        assert sig.score() == 70.0
+        assert sig.score() == 62.5
+
+    def test_required_mostly_unsigned_scores_near_none_signed(self):
+        gh = TrustMockGH(pr_commits=[
+            {"commit": {"message": "signed\n\nSigned-off-by: Alice <a@x.com>"}},
+            *({"commit": {"message": f"unsigned {i}"}} for i in range(9)),
+        ])
+        sig = SignoffSignal(gh, _cfg_signoff(True), {})
+        assert sig.score() == 80.5
 
     def test_api_failure_neutral(self):
         class Fail:

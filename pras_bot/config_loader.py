@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -39,13 +40,14 @@ def _fetch_repo_config(token: str, repo_full: str) -> dict[str, Any] | None:
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge *override* into *base*."""
+    """Recursively merge *override* over *base* without mutating inputs."""
+    merged = copy.deepcopy(base)
     for key, val in override.items():
-        if isinstance(val, dict) and isinstance(base.get(key), dict):
-            base[key] = _deep_merge(base[key], val)
+        if isinstance(val, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], val)
         else:
-            base[key] = val
-    return base
+            merged[key] = copy.deepcopy(val)
+    return merged
 
 
 def load_config(

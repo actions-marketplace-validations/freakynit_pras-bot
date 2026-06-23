@@ -8,8 +8,8 @@ labels them so maintainers can decide what deserves attention.
 ## Signals
 
 Every incoming PR is scored **0–100** (0 = legit, 100 = spam) from a
-weighted average of **24 signals** — 4 *PR-shape*, 8 *contributor-trust*,
-7 *repo-fit & maintainer-burden*, and 5 optional *LLM-powered* signals
+weighted average of **25 signals** — 4 *PR-shape*, 8 *contributor-trust*,
+7 *repo-fit & maintainer-burden*, and 6 optional *LLM-powered* signals
 (off by default) — then mapped to a single label (`likely-spam` /
 `needs-review` / `looks-good`). Each signal returns a raw score in
 [0, 100] (or `None` to skip itself); the final score is
@@ -20,8 +20,8 @@ checklist items each one covers, see 👉 **[`SIGNALS.md`](SIGNALS.md)**.
 
 ### Optional: LLM-powered signals (cost money)
 
-Five signals — `related_work`, `contribution_rules`, `pr_template`,
-`scope_alignment`, and `pr_body_quality` — can use GitHub Models (an LLM)
+Six signals — `related_work`, `contribution_rules`, `diff_credibility`,
+`pr_template`, `scope_alignment`, and `pr_body_quality` — can use GitHub Models (an LLM)
 for natural-language judgment (topic relevance, rule adherence, template
 completion, scope/roadmap alignment, body-quality / slop detection).
 They're **off by default**. Each has a `provider` (`off` / `non_llm` / `llm`)
@@ -66,6 +66,11 @@ are skipped — a signal never crashes because a file is absent.
 LLM responses are parsed defensively (markdown fences tolerated, scores
 clamped to [0, 100], failures degrade to a neutral 50 — never crash). Full
 details in [`SIGNALS.md`](SIGNALS.md).
+
+For diff-aware LLM checks, the bot uses GitHub's existing PR files response
+(`patch` fields) and sends only a bounded subset: by default all patchable
+files for PRs with up to three files, or the top three files by additions for
+larger PRs, capped at 5000 characters of patch context.
 
 ## Installation
 
@@ -128,6 +133,7 @@ weights:
   # optional LLM-powered (off by default; excluded unless enabled)
   related_work:          0.75
   contribution_rules:    0.5
+  diff_credibility:      0.75
   pr_template:           0.5
   scope_alignment:       0.5
   pr_body_quality:       0.75
@@ -180,7 +186,7 @@ signals:
   # bio_positioning, activity_burstiness, and the repo-fit / maintainer-burden
   # signals (tests_included, change_scope, risky_paths, file_maintenance,
   # linked_issue, duplicate_work, signoff) and the optional LLM signals
-  # (pr_template, scope_alignment, pr_body_quality) tuning knobs.
+  # (diff_credibility, pr_template, scope_alignment, pr_body_quality) tuning knobs.
 
   # Example: opt into DCO sign-off enforcement + PR-template completion
   signoff:
@@ -235,6 +241,7 @@ pras-bot/
 │       ├── activity_burstiness.py
 │       ├── related_work.py         # LLM/non-LLM: relevance to this repo
 │       ├── contribution_rules.py   # LLM-only: adherence to CONTRIBUTING.md
+│       ├── diff_credibility.py     # LLM-only: PR claims match the diff
 │       ├── pr_template.py          # LLM/non-LLM: PR template completion (${VAR})
 │       ├── scope_alignment.py      # LLM/non-LLM: roadmap/architecture fit
 │       ├── pr_body_quality.py      # LLM/non-LLM: body quality / slop
@@ -280,8 +287,9 @@ Create a `test_fixtures/pr_opened.json` file with a sample GitHub webhook payloa
 
 - The cross-repo + trust signals use GitHub's REST search API, which is
   rate-limited (10 req/min unauthenticated, 30 req/min with token). A single
-  PR run issues ~10 search requests plus 1 user lookup, 1 file-list fetch
-  (`pulls/{n}/files`, shared by the repo-fit/burden signals) and 1 in-repo
+  PR run issues ~10 search requests plus 1 user lookup, a paginated file-list
+  fetch (`pulls/{n}/files`, shared by the repo-fit/burden and diff-aware
+  LLM signals) and 1 in-repo
   duplicate search — fine for normal volume, but it can rate-limit on very
   high-traffic repos.
 - Every signal that hits the API degrades to a neutral score on failure

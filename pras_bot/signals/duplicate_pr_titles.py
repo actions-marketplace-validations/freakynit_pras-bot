@@ -39,11 +39,11 @@ class DuplicatePRTitlesSignal(ScoredSignal):
             return 50.0
 
         if len(titles) < 2:
-            return 0.0                    # not enough PRs to detect duplication
+            return 50.0                   # not enough PRs to detect duplication
 
         normalized = [normalize_title(t) for t in titles if t]
         if not normalized:
-            return 0.0
+            return 50.0
 
         # Largest cluster of identical normalized titles, as a fraction of all.
         counts: dict[str, int] = {}

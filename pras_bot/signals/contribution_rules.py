@@ -17,6 +17,7 @@ Covers:
 
 from __future__ import annotations
 
+from ._diff import patch_context_from_files, patch_context_limits
 from .base import LLM_JSON_SYSTEM, ScoredSignal, clamp_score
 from ..json_util import extract_first_json
 
@@ -50,14 +51,30 @@ class ContributionRulesSignal(ScoredSignal):
 
         title = self.pr_data.get("title") or ""
         body = self.pr_data.get("body") or ""
+        patch_context = self._patch_context()
+        patch_section = (
+            f"\nSelected PR patches (bounded; may be empty for binary/large files):\n{patch_context}\n"
+            if patch_context
+            else ""
+        )
         prompt = (
             "You are scoring how well a pull request follows a repository's\n"
             "contribution guidelines. 0 = fully compliant, 100 = ignores rules.\n\n"
             f"CONTRIBUTING guidelines (truncated):\n{rules[:4000]}\n\n"
             f"PR title: {title}\n"
             f"PR body (truncated):\n{body[:2000]}\n\n"
+            f"{patch_section}"
             'Return ONLY a JSON object: {"score": <integer 0-100>, "reason": "<short>"}'
         )
         content = self.gh.llm_judge(prompt, system=LLM_JSON_SYSTEM)
         data = extract_first_json(content)
         return clamp_score(data.get("score"))
+
+    def _patch_context(self) -> str:
+        max_files, max_chars = patch_context_limits(self.config)
+        try:
+            files = self.gh.fetch_pr_files()
+        except Exception as exc:
+            print(f"⚠️  contribution_rules: fetch PR patches failed ({exc!r}); continuing without patches")
+            return ""
+        return patch_context_from_files(files, max_files=max_files, max_chars=max_chars)

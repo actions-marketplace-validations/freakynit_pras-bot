@@ -27,6 +27,7 @@ Covers:
 from __future__ import annotations
 
 from .base import LLM_JSON_SYSTEM, ScoredSignal, clamp_score, linear
+from ._diff import patch_context_from_files, patch_context_limits
 from ._text import tokenize
 from ..json_util import extract_first_json
 
@@ -97,6 +98,12 @@ class ScopeAlignmentSignal(ScoredSignal):
     def _score_llm(self, docs: str) -> float:
         title = self.pr_data.get("title") or ""
         body = self.pr_data.get("body") or ""
+        patch_context = self._patch_context()
+        patch_section = (
+            f"\nSelected PR patches (bounded; may be empty for binary/large files):\n{patch_context}\n"
+            if patch_context
+            else ""
+        )
         prompt = (
             "You are scoring how well a pull request aligns with a project's\n"
             "documented scope, roadmap, and architecture.\n"
@@ -106,8 +113,18 @@ class ScopeAlignmentSignal(ScoredSignal):
             f"Project scope/roadmap/architecture docs (truncated):\n{docs[:4000]}\n\n"
             f"PR title: {title}\n"
             f"PR body (truncated):\n{body[:2000]}\n\n"
+            f"{patch_section}"
             'Return ONLY a JSON object: {"score": <integer 0-100>, "reason": "<short>"}'
         )
         content = self.gh.llm_judge(prompt, system=LLM_JSON_SYSTEM)
         data = extract_first_json(content)
         return clamp_score(data.get("score"))
+
+    def _patch_context(self) -> str:
+        max_files, max_chars = patch_context_limits(self.config)
+        try:
+            files = self.gh.fetch_pr_files()
+        except Exception as exc:
+            print(f"⚠️  scope_alignment: fetch PR patches failed ({exc!r}); continuing without patches")
+            return ""
+        return patch_context_from_files(files, max_files=max_files, max_chars=max_chars)

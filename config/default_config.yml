@@ -33,6 +33,7 @@ weights:
   pr_template:           0.5
   scope_alignment:       0.5
   pr_body_quality:       0.75
+  diff_credibility:      0.75
 
 # ---------------------------------------------------------------------------
 # label thresholds  (final spam score ∈ [0, 100])
@@ -71,8 +72,12 @@ llm:
   model: "openai/gpt-4o-mini"          # any model from github.com/marketplace/models
   endpoint: "https://models.github.ai/inference/chat/completions"
   temperature: 0.0                       # 0 = deterministic
-  max_tokens: 256
+  max_input_tokens: 50000                # rough prompt cap before sending to the model
+  max_tokens: 5000                       # output token cap
   timeout: 30
+  patch_context:
+    max_files: 3                         # if PR has >3 patchable files, use top 3 by additions
+    max_chars: 5000                      # total selected patch context sent to LLM signals
 
 # ---------------------------------------------------------------------------
 # signal-specific tuning knobs  (override any parameter)
@@ -211,6 +216,10 @@ signals:
     provider: "off"          # only 'off' or 'llm' supported (non_llm needs an LLM)
     contributing_path: "CONTRIBUTING.md"
     template_path: ".github/PULL_REQUEST_TEMPLATE.md"
+  diff_credibility:
+    # compares bounded file patches to the PR title/body claims.
+    # only 'off' or 'llm' supported; uses llm.patch_context limits above.
+    provider: "off"
 
   # ---- repo-fit & maintainer-burden signals (file-list / body based) ----
   # These read the PR's changed-file list (one shared GET /pulls/{n}/files

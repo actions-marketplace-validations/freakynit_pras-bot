@@ -1,7 +1,7 @@
 # Signals Reference
 
 PRAS Bot scores every PR on a **0–100 spam scale** (0 = clearly legitimate,
-100 = almost certainly spam) by combining **24 weighted signals**, then maps
+100 = almost certainly spam) by combining **25 weighted signals**, then maps
 the final score to a single label.
 
 ## How the final score is computed
@@ -21,38 +21,39 @@ overridden per-repo via `.github/pras-bot.yml`.
 
 ## Signal overview
 
-When all signals are enabled the total weight = **21.5**; the five LLM
+When all signals are enabled the total weight = **22.25**; the six LLM
 signals are **off by default** and `signoff` is **opt-in**, so the default
 effective total is **17.75**.
-*Share* = `weight ÷ 21.5` (roughly how much each signal moves the final
+*Share* = `weight ÷ 22.25` (roughly how much each signal moves the final
 score when all are on). *API* = extra GitHub API calls per PR run.
 
 | Signal                  | Category           | Weight | Share  | What it measures                                          | API calls |
 |-------------------------|--------------------|:------:|:------:|-----------------------------------------------------------|:---------:|
-| `lines_changed`         | PR-shape           | 1.0    | 4.7%   | Added + deleted lines (too few *or* too many)            | 0         |
-| `files_changed`         | PR-shape           | 1.0    | 4.7%   | Number of modified files (single-file drive-by)           | 0         |
-| `account_age`           | PR-shape           | 1.5    | 7.0%   | How old the author's GitHub account is                    | 1 †       |
-| `cross_repo_prs`        | PR-shape           | 2.0    | 9.3%   | PRs by the author across all repos in last 7 days         | 1 search  |
-| `association`           | Contributor-trust  | 1.5    | 7.0%   | Author's repo role (owner/member/collaborator vs first-timer) | 0      |
-| `repo_merge_history`    | Contributor-trust  | 1.5    | 7.0%   | Previously **merged** PRs by the author in this repo      | 1 search  |
-| `closed_unmerged_ratio` | Contributor-trust  | 1.0    | 4.7%   | Share of the author's PRs closed *without* merge          | 2 search  |
-| `issue_participation`   | Contributor-trust  | 0.75   | 3.5%   | Issues in this repo the author has commented on           | 1 search  |
-| `review_engagement`     | Contributor-trust  | 0.75   | 3.5%   | Share of the author's own PRs where they replied           | 2 search  |
-| `duplicate_pr_titles`   | Contributor-trust  | 1.25   | 5.8%   | How many of the author's recent PR titles are near-identical | 1 search |
-| `bio_positioning`       | Contributor-trust  | 0.75   | 3.5%   | Generic "open source contributor" bio + little accepted work | 1 search †|
-| `activity_burstiness`   | Contributor-trust  | 1.0    | 4.7%   | PRs clustered in a short window across many repos         | 1 search  |
-| `tests_included`        | Repo-fit/Burden    | 0.75   | 3.5%   | Does the PR add tests alongside code?                     | 1 file †† |
-| `change_scope`          | Repo-fit/Burden    | 0.75   | 3.5%   | Sprawl across unrelated top-level directories             | 1 file †† |
-| `risky_paths`           | Repo-fit/Burden    | 0.75   | 3.5%   | Touches API / migrations / deps / CI / auth / security / payment paths | 1 file †† |
-| `file_maintenance`      | Repo-fit/Burden    | 0.5    | 2.3%   | Touches vendored / generated / deprecated files (+ optional recency) | 1 file †† |
-| `linked_issue`          | Repo-fit/Burden    | 0.5    | 2.3%   | References an issue (`#123`, `fixes #`, `/issues/n`)       | 0         |
-| `duplicate_work`        | Repo-fit/Burden    | 0.5    | 2.3%   | Duplicates an existing in-repo PR (exact title)           | 1 search  |
-| `signoff`               | Repo-fit/Burden    | 0.75   | 3.5%   | DCO `Signed-off-by:` satisfied (**opt-in**)               | 1 commit §|
-| `related_work`          | LLM (optional)     | 0.75   | 3.5%   | Author's prior work relevant to this repo (non_llm or llm) | 1 search ‡|
-| `contribution_rules`    | LLM (optional)     | 0.5    | 2.3%   | PR adherence to CONTRIBUTING.md / template (llm only)       | 0–1 file  |
-| `pr_template`           | LLM (optional)     | 0.5    | 2.3%   | PR template completion (`${VARIABLE}` fields) (non_llm or llm) | 1 file    |
-| `scope_alignment`       | LLM (optional)     | 0.5    | 2.3%   | Aligns with documented scope/roadmap/architecture (non_llm or llm) | 0–2 files |
-| `pr_body_quality`       | LLM (optional)     | 0.75   | 3.5%   | Body quality / slop / vague phrases (non_llm or llm)      | 0         |
+| `lines_changed`         | PR-shape           | 1.0    | 4.5%   | Added + deleted lines (too few *or* too many)            | 0         |
+| `files_changed`         | PR-shape           | 1.0    | 4.5%   | Number of modified files (single-file drive-by)           | 0         |
+| `account_age`           | PR-shape           | 1.5    | 6.7%   | How old the author's GitHub account is                    | 1 †       |
+| `cross_repo_prs`        | PR-shape           | 2.0    | 9.0%   | PRs by the author across all repos in last 7 days         | 1 search  |
+| `association`           | Contributor-trust  | 1.5    | 6.7%   | Author's repo role (owner/member/collaborator vs first-timer) | 0      |
+| `repo_merge_history`    | Contributor-trust  | 1.5    | 6.7%   | Previously **merged** PRs by the author in this repo      | 1 search  |
+| `closed_unmerged_ratio` | Contributor-trust  | 1.0    | 4.5%   | Share of the author's PRs closed *without* merge          | 2 search  |
+| `issue_participation`   | Contributor-trust  | 0.75   | 3.4%   | Issues in this repo the author has commented on           | 1 search  |
+| `review_engagement`     | Contributor-trust  | 0.75   | 3.4%   | Share of the author's own PRs where they replied           | 2 search  |
+| `duplicate_pr_titles`   | Contributor-trust  | 1.25   | 5.6%   | How many of the author's recent PR titles are near-identical | 1 search |
+| `bio_positioning`       | Contributor-trust  | 0.75   | 3.4%   | Generic "open source contributor" bio + little accepted work | 1 search †|
+| `activity_burstiness`   | Contributor-trust  | 1.0    | 4.5%   | PRs clustered in a short window across many repos         | 1 search  |
+| `tests_included`        | Repo-fit/Burden    | 0.75   | 3.4%   | Does the PR add tests alongside code?                     | 1 file †† |
+| `change_scope`          | Repo-fit/Burden    | 0.75   | 3.4%   | Sprawl across unrelated top-level directories             | 1 file †† |
+| `risky_paths`           | Repo-fit/Burden    | 0.75   | 3.4%   | Touches API / migrations / deps / CI / auth / security / payment paths | 1 file †† |
+| `file_maintenance`      | Repo-fit/Burden    | 0.5    | 2.2%   | Touches vendored / generated / deprecated files (+ optional recency) | 1 file †† |
+| `linked_issue`          | Repo-fit/Burden    | 0.5    | 2.2%   | References an issue (`#123`, `fixes #`, `/issues/n`)       | 0         |
+| `duplicate_work`        | Repo-fit/Burden    | 0.5    | 2.2%   | Duplicates an existing in-repo PR (exact title)           | 1 search  |
+| `signoff`               | Repo-fit/Burden    | 0.75   | 3.4%   | DCO `Signed-off-by:` satisfied (**opt-in**)               | 1 commit §|
+| `related_work`          | LLM (optional)     | 0.75   | 3.4%   | Author's prior work relevant to this repo (non_llm or llm) | 1 search ‡|
+| `contribution_rules`    | LLM (optional)     | 0.5    | 2.2%   | PR adherence to CONTRIBUTING.md / template (llm only)       | 0–1 file + patch †† |
+| `diff_credibility`      | LLM (optional)     | 0.75   | 3.4%   | PR title/body claims match the actual diff (llm only)     | patch ††  |
+| `pr_template`           | LLM (optional)     | 0.5    | 2.2%   | PR template completion (`${VARIABLE}` fields) (non_llm or llm) | 1 file    |
+| `scope_alignment`       | LLM (optional)     | 0.5    | 2.2%   | Aligns with documented scope/roadmap/architecture (non_llm or llm) | 0–2 files + patch †† |
+| `pr_body_quality`       | LLM (optional)     | 0.75   | 3.4%   | Body quality / slop / vague phrases (non_llm or llm)      | 0         |
 
 † `account_age` and `bio_positioning` **share one** cached `/users/:login`
 call.
@@ -61,7 +62,7 @@ call.
 ‡ `related_work` adds one cached `GET /repos/{o}/{r}` + one search; with
 `provider: llm` it also calls GitHub Models (see below).
 § `signoff` only makes the commits fetch when `signoff.required: true` (opt-in).
-The five LLM signals are **off by default** and excluded from the score
+The six LLM signals are **off by default** and excluded from the score
 unless enabled; `signoff` is skipped unless opted in.
 
 Default per PR: 1 user lookup + 1 shared file-list fetch + ~10 search
@@ -118,7 +119,8 @@ Input = PRs opened by the author across **all** public repos in the last
 | PR count (7-day window) | Raw score |
 |-------------------------|:---------:|
 | (no username / API failure) | 50 |
-| 0 – 2 (`low_max`)   | 0 / 5 / 10 (`count × 5`) |
+| 0 public/search-visible PRs | 50 (neutral no-history case) |
+| 1 – 2 (`low_max`)   | 5 / 10 (`count × 5`) |
 | 3 – 5 (`med_max`)   | 10 → 35 (linear) |
 | 6 – 10 (`high_max`) | 35 → 70 (linear) |
 | > 10                | 70 → 100 (`min(100, 70 + (n−10)·4)`) |
@@ -203,7 +205,7 @@ PRs inspected (`sample_size` = 30).
 | Largest duplicate cluster ratio | Raw score |
 |---------------------------------|:---------:|
 | (no username / API failure) | 50 |
-| fewer than 2 PRs | 0 (not enough data) |
+| fewer than 2 PRs | 50 (not enough data) |
 | ≤ 0.1 (`low_max`)  | 0 → 10 (linear) |
 | 0.1 – 0.3 (`med_max`) | 10 → 45 (linear) |
 | 0.3 – 0.6 (`high_max`) | 45 → 80 (linear) |
@@ -365,16 +367,16 @@ skipped); turn on only for repos that require DCO.
 | `false` (default) | — | skipped (`None`) |
 | `true` | (commits API failure) | 50 |
 | `true` | all commits signed-off | 0 |
-| `true` | some commits missing sign-off | 70 |
+| `true` | some commits missing sign-off | `40 + 45 × missing_ratio` |
 | `true` | all commits missing sign-off | 85 |
 
 ---
 
 ## LLM-powered signals (optional)
 
-These five signals cover checklist items that need natural-language judgment
+These six signals cover checklist items that need natural-language judgment
 (topic relevance, rule adherence, template completion, scope/roadmap fit, body
-quality / slop detection). They are **opt-in** and **off by default**,
+quality / slop detection, and claim-vs-diff credibility). They are **opt-in** and **off by default**,
 and each lets you choose how it runs via a `provider` setting so you stay in
 control of cost:
 
@@ -395,13 +397,19 @@ llm:
   enabled: true
   model: "openai/gpt-4o-mini"   # github.com/marketplace/models
   temperature: 0.0               # 0 = deterministic
-  max_tokens: 256
+  max_input_tokens: 50000        # rough prompt cap before sending
+  max_tokens: 5000               # output token cap
   timeout: 30
+  patch_context:
+    max_files: 3                 # if PR has >3 patchable files, top 3 by additions
+    max_chars: 5000              # total selected patch text sent to diff-aware signals
 
 signals:
   related_work:
     provider: llm          # or non_llm (no cost) / off
   contribution_rules:
+    provider: llm          # non_llm NOT supported here
+  diff_credibility:
     provider: llm          # non_llm NOT supported here
   pr_template:
     provider: non_llm     # or llm / off (default)
@@ -452,7 +460,7 @@ Covers *"Repeatedly ignores project contribution rules."*
 | `provider` | How it scores |
 |------------|------------------------------------------------------|
 | `off`      | Disabled (default). |
-| `llm`      | Fetches `CONTRIBUTING.md` (or the PR template) and asks the model how well the PR follows it. |
+| `llm`      | Fetches `CONTRIBUTING.md` (or the PR template), includes bounded selected patches when available, and asks the model how well the PR follows the rules. |
 
 `non_llm` is **not** supported (interpreting free-form rules needs an LLM);
 setting it is treated as `off`.
@@ -462,6 +470,28 @@ setting it is treated as `off`.
 | no `CONTRIBUTING.md` / template in repo | skipped (`None`) |
 | (LLM / API failure) | 50 |
 | otherwise | model's `score` (0 = compliant, 100 = ignores rules), clamped |
+
+### `diff_credibility` — weight 0.75
+
+Covers *"PR title/body sounds useful but diff is trivial or unrelated"*,
+*"adds wrappers / abstractions / refactors without need"*, and
+*"security/performance claims without proof in the diff."*
+
+| `provider` | How it scores |
+|------------|------------------------------------------------------|
+| `off`      | Disabled (default). |
+| `llm`      | Sends bounded selected `patch` fields from `GET /pulls/{n}/files` and asks the model whether the actual changed lines substantively match the title/body claims. |
+
+`non_llm` is **not** supported. The patch context is limited by
+`llm.patch_context.max_files` and `llm.patch_context.max_chars`; by default,
+PRs with up to three patchable files include all patches, while larger PRs
+include the top three files by additions, capped at 5000 characters total.
+
+| Situation | Raw score |
+|-----------|:---------:|
+| no patch context available (e.g. binary-only diff) | skipped (`None`) |
+| (LLM / API failure) | 50 |
+| otherwise | model's `score` (0 = credible/substantive, 100 = misleading/trivial/unrelated), clamped |
 
 ### `pr_template` — weight 0.5
 
@@ -498,7 +528,7 @@ reference docs (`reference_docs`, repo-relative; defaults to `ROADMAP.md` and
 | `provider` | How it scores |
 |------------|------------------------------------------------------|
 | `non_llm`  | Token-overlap (Jaccard) between the PR title+body and the reference docs. |
-| `llm`      | GitHub Models judges alignment from the same inputs. |
+| `llm`      | GitHub Models judges alignment from the docs, title/body, and bounded selected patches when available. |
 
 | Token overlap (`non_llm`) | Raw score |
 |---------------------------|:---------:|
@@ -548,21 +578,21 @@ runs are removed automatically.
 
 ---
 
-## Checklist items not implemented as separate signals
+## Checklist items still not fully implemented
 
-These remain subjective or need the **per-PR diff** (which the bot avoids for
-cost/resilience), so they are intentionally not separate signals:
+These remain subjective, require past-PR diff analysis, or need external
+evidence such as benchmarks:
 
-- *PR title/body sounds useful but diff is trivial or unrelated* — needs the diff.
-- *Adds comments / wrappers / abstractions, or refactors without need* / *makes code more verbose without improving behavior* — needs diff.
-- *Fixes “potential” issues without proof* / *security/performance claims without exploit or benchmark* — needs diff + benchmarks.
+- *Security/performance claims without exploit or benchmark* — `diff_credibility` can flag unsupported claims in the changed lines, but it cannot verify external benchmark truth.
 - *Prior PRs show tests, context, follow-through* — needs diff/file analysis of past PRs (partly covered by `related_work` and the PR-shape signals).
 - *Maintainers have previously interacted positively* / *responds constructively to review feedback* — sentiment of review comments (needs comment text). `review_engagement` covers the engagement-ratio proxy.
 
 > Now covered by the new repo-fit / burden / LLM signals: *"completes the PR
 > template"* → `pr_template`; *"respects scope/roadmap"* / *"matches
 > architecture"* → `scope_alignment`; *"generic / vague PR body"* →
-> `pr_body_quality`; *"no tests"* → `tests_included`; *"multiple unrelated
+> `pr_body_quality`; *"title/body sounds useful but diff is trivial or
+> unrelated"* / *"unjustified wrappers/refactors"* → `diff_credibility`;
+> *"no tests"* → `tests_included`; *"multiple unrelated
 > areas"* → `change_scope`; *"public API / migrations / deps / CI / auth /
 > payment changes"* → `risky_paths`; *"touches vendored / generated /
 > deprecated files"* → `file_maintenance`; *"no concrete issue"* →

@@ -49,4 +49,5 @@ class SignoffSignal(ScoredSignal):
             return 0.0                        # every commit signed off
         if missing == len(commits):
             return 85.0                       # no commit signed off
-        return 70.0                           # some commits missing sign-off
+        missing_ratio = missing / len(commits)
+        return 40.0 + missing_ratio * 45.0    # scale by how incomplete DCO is

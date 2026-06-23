@@ -81,6 +81,21 @@ class GitHubClient:
             body = exc.read().decode(errors="replace")
             raise GitHubAPIError(exc.code, f"REST GET {url} → {exc.code} {exc.reason}: {body}") from exc
 
+    def _rest_get_paginated(self, url: str, *, per_page: int = 100, timeout: int = 15) -> list[Any]:
+        """Return every item from a simple page/per_page REST list endpoint."""
+        items: list[Any] = []
+        page = 1
+        separator = "&" if "?" in url else "?"
+        while True:
+            page_url = f"{url}{separator}per_page={per_page}&page={page}"
+            data = self._rest_get(page_url, timeout=timeout)
+            if not isinstance(data, list):
+                return items
+            items.extend(data)
+            if len(data) < per_page:
+                return items
+            page += 1
+
     def _rest_post(self, url: str, body: dict[str, Any], timeout: int = 15) -> dict[str, Any]:
         data = json.dumps(body).encode()
         req = urllib.request.Request(url, data=data, headers=self._rest_headers(), method="POST")
@@ -280,25 +295,21 @@ class GitHubClient:
 
         Cached on the client so the several path-based signals
         (tests_included, change_scope, risky_paths, file_maintenance) share
-        one ``GET /pulls/{n}/files`` call. Capped at the first 100 files.
+        one paginated ``GET /pulls/{n}/files`` call sequence.
         """
         if self._pr_files_cache is None:
-            data = self._rest_get(
-                f"{self._rest_base}/pulls/{self.pr_number}/files?per_page=100"
-            )
-            self._pr_files_cache = data if isinstance(data, list) else []
+            data = self._rest_get_paginated(f"{self._rest_base}/pulls/{self.pr_number}/files")
+            self._pr_files_cache = [item for item in data if isinstance(item, dict)]
         return self._pr_files_cache
 
     def fetch_pr_commits(self) -> list[dict[str, Any]]:
         """Return the PR's commits (with commit.message for DCO/sign-off checks).
 
-        Cached on the client. Capped at the first 100 commits.
+        Cached on the client and paginated past GitHub's default 100-item page.
         """
         if self._pr_commits_cache is None:
-            data = self._rest_get(
-                f"{self._rest_base}/pulls/{self.pr_number}/commits?per_page=100"
-            )
-            self._pr_commits_cache = data if isinstance(data, list) else []
+            data = self._rest_get_paginated(f"{self._rest_base}/pulls/{self.pr_number}/commits")
+            self._pr_commits_cache = [item for item in data if isinstance(item, dict)]
         return self._pr_commits_cache
 
     def fetch_repo_pr_titles(self, limit: int = 50) -> list[dict[str, Any]]:
@@ -359,8 +370,10 @@ class GitHubClient:
         endpoint = cfg.get("endpoint", "https://models.github.ai/inference/chat/completions")
         model = cfg.get("model", "openai/gpt-4o-mini")
         temperature = cfg.get("temperature", 0.0)
-        max_tokens = cfg.get("max_tokens", 256)
+        max_tokens = cfg.get("max_tokens", 5000)
+        max_input_tokens = cfg.get("max_input_tokens", 50000)
         timeout = cfg.get("timeout", 30)
+        prompt = self._truncate_prompt(prompt, max_input_tokens=max_input_tokens)
 
         messages: list[dict[str, Any]] = []
         if system:
@@ -401,6 +414,28 @@ class GitHubClient:
         if isinstance(content, list):  # some models return content parts
             content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
         return content if isinstance(content, str) else str(content)
+
+    @staticmethod
+    def _truncate_prompt(prompt: str, *, max_input_tokens: Any) -> str:
+        """Apply a rough input-token cap while preserving prompt instructions."""
+        try:
+            token_limit = int(max_input_tokens)
+        except (TypeError, ValueError):
+            token_limit = 50000
+        if token_limit <= 0:
+            return prompt
+
+        max_chars = token_limit * 4
+        if len(prompt) <= max_chars:
+            return prompt
+
+        marker = "\n\n[...truncated to llm.max_input_tokens budget...]\n\n"
+        keep = max_chars - len(marker)
+        if keep <= 0:
+            return prompt[:max_chars]
+        head = keep // 2
+        tail = keep - head
+        return prompt[:head] + marker + prompt[-tail:]
 
     # ------------------------------------------------------------------
     # Labelling
