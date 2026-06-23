@@ -1,0 +1,41 @@
+name: "PR Anti-Spam Bot"
+description: "Score incoming PRs for spam signals and auto-label them"
+author: "pras-bot"
+
+inputs:
+  config_path:
+    description: "Path to a YAML config file inside the repo (default: .github/pras-bot.yml)"
+    required: false
+    default: ".github/pras-bot.yml"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyyaml
+        # Install the pras-bot package from the action directory
+        pip install "$GITHUB_ACTION_PATH"
+
+    - name: Run pras-bot
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_EVENT_PATH: ${{ github.event_path }}
+        INPUT_CONFIG_PATH: ${{ inputs.config_path }}
+      run: python -m pras_bot.main
+
+branding:
+  icon: "shield"
+  color: "purple"

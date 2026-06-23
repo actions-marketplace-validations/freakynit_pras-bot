@@ -1,0 +1,297 @@
+# PR Anti-Spam Bot — Default Configuration
+# Override by placing .github/pras-bot.yml in your repository.
+
+# ---------------------------------------------------------------------------
+# signal weights  (each weight ≥ 0; final spam score is weight * signal_score)
+# higher weight  →  signal contributes more to the final spam score
+# final score = Σ(weight × raw) / Σ(weights), clamped to [0, 100]
+# ---------------------------------------------------------------------------
+weights:
+  lines_changed:         1.0
+  files_changed:         1.0
+  account_age:           1.5
+  cross_repo_prs:        2.0
+  association:           1.5
+  repo_merge_history:    1.5
+  closed_unmerged_ratio: 1.0
+  issue_participation:   0.75
+  review_engagement:     0.75
+  duplicate_pr_titles:   1.25
+  bio_positioning:       0.75
+  activity_burstiness:   1.0
+  related_work:          0.75
+  contribution_rules:    0.5
+  # ---- repo-fit & maintainer-burden (file-list / body based) ----
+  tests_included:        0.75
+  change_scope:          0.75
+  risky_paths:           0.75
+  file_maintenance:      0.5
+  linked_issue:          0.5
+  duplicate_work:        0.5
+  signoff:               0.75   # opt-in: only counts when signoff.required=true
+  # ---- optional LLM-powered (off by default; excluded unless enabled) ----
+  pr_template:           0.5
+  scope_alignment:       0.5
+  pr_body_quality:       0.75
+
+# ---------------------------------------------------------------------------
+# label thresholds  (final spam score ∈ [0, 100])
+# ---------------------------------------------------------------------------
+labels:
+  - threshold: 70
+    name: "likely-spam"
+    color: "ff0000"          # red
+    description: "High probability of being low-quality / AI-generated spam"
+  - threshold: 40
+    name: "needs-review"
+    color: "ffaa00"          # amber
+    description: "Some signals triggered — maintainer should take a closer look"
+  - threshold: 0
+    name: "looks-good"
+    color: "0e8a16"          # green
+    description: "Passed automated spam checks"
+
+# ---------------------------------------------------------------------------
+# comment on PR with score breakdown?  (true | false)
+# ---------------------------------------------------------------------------
+comment: true
+
+# ---------------------------------------------------------------------------
+# LLM-powered signals (OPTIONAL — uses GitHub Models, costs money/quota)
+#
+# To enable:
+#   1. add `permissions: models: read` to your workflow YAML
+#   2. set llm.enabled: true below
+#   3. on each NLP signal set provider: llm (or non_llm where supported)
+# When llm.enabled is false, every provider: llm signal is silently skipped
+# (excluded from the score) rather than biasing it toward a neutral 50.
+# ---------------------------------------------------------------------------
+llm:
+  enabled: false
+  model: "openai/gpt-4o-mini"          # any model from github.com/marketplace/models
+  endpoint: "https://models.github.ai/inference/chat/completions"
+  temperature: 0.0                       # 0 = deterministic
+  max_tokens: 256
+  timeout: 30
+
+# ---------------------------------------------------------------------------
+# signal-specific tuning knobs  (override any parameter)
+# ---------------------------------------------------------------------------
+signals:
+  lines_changed:
+    # curve: very-tiny (1-10) → high spam | tiny (11-50) → med |
+    #        normal (51-300) → low  | large (301-800) → med |
+    #        very-large (801+) → high
+    thresholds:
+      very_tiny_max: 10     # lines ≤ this  → maximum suspicion
+      tiny_max: 50          # lines ≤ this  → medium-high
+      normal_max: 300       # lines ≤ this  → low (legit range)
+      large_max: 800        # lines ≤ this  → medium (suspiciously big)
+
+  files_changed:
+    thresholds:
+      low_max: 3            # files ≤ this  → low suspicion
+      med_max: 10           # files ≤ this  → medium
+      # above med_max       → high suspicion
+
+  account_age:
+    thresholds:
+      very_new_days: 7      # ≤ 7 days      → max suspicion
+      new_days: 30          # ≤ 30 days     → high
+      medium_days: 180      # ≤ 180 days    → medium
+      established_days: 365 # ≤ 365 days    → low
+      # > 365 days                         → very low
+
+  cross_repo_prs:
+    thresholds:
+      low_max: 2            # ≤ 2 PRs       → low suspicion
+      med_max: 5            # ≤ 5 PRs       → medium
+      high_max: 10          # ≤ 10 PRs      → high
+      # > 10                               → very high (spammer)
+    lookback_days: 7        # how many days back to search
+
+  # ---- contributor-trust signals ----------------------------------------
+
+  association:
+    # author_association already on the PR payload (no extra API call).
+    # Map each GitHub association value → raw spam score [0, 100].
+    scores:
+      OWNER: 0
+      MEMBER: 0
+      COLLABORATOR: 0
+      CONTRIBUTOR: 15              # has had a PR merged here before
+      FIRST_TIME_CONTRIBUTOR: 60
+      FIRST_TIMER: 70
+      NONE: 80
+      MANNEQUIN: 80
+    default: 80
+
+  repo_merge_history:
+    # how many of the author's PRs have been MERGED in THIS repo before
+    thresholds:
+      none_max: 0          # 0 merged PRs   → high
+      few_max: 2           # 1-2           → medium-high
+      some_max: 5          # 3-5           → low
+      # > some_max                        → very low (trusted)
+
+  closed_unmerged_ratio:
+    # closed-unmerged / (closed-unmerged + merged) across all repos
+    thresholds:
+      low_max: 0.2         # ratio ≤ 0.2   → low suspicion
+      med_max: 0.5         # ratio ≤ 0.5   → medium
+      high_max: 0.8        # ratio ≤ 0.8   → high
+      # > 0.8                             → very high (mostly rejected)
+
+  issue_participation:
+    # issues in THIS repo the author has commented on (proxy for prior discussion)
+    thresholds:
+      none_max: 0          # 0             → high (no prior discussion)
+      few_max: 1           # 1             → medium-high
+      some_max: 5          # 2-5           → low
+      # > some_max                        → very low
+
+  review_engagement:
+    # fraction of the author's own PRs where they also commented
+    thresholds:
+      high_min: 0.8        # ≥ 80% engaged → low suspicion
+      med_min: 0.4         # ≥ 40%         → medium
+      low_min: 0.1         # ≥ 10%         → medium-high
+      # < 0.1                             → high (almost never responds)
+
+  duplicate_pr_titles:
+    # largest cluster of near-identical titles / total recent PRs inspected
+    sample_size: 30        # how many recent PRs to inspect
+    thresholds:
+      low_max: 0.1         # ≤ 10% in largest cluster → low
+      med_max: 0.3         # ≤ 30%         → medium
+      high_max: 0.6        # ≤ 60%         → high
+      # > 0.6                             → very high (mass-duplicated)
+
+  bio_positioning:
+    # generic "open source contributor" style bio + little accepted work
+    generic_phrases:
+      - "open source contributor"
+      - "open-source contributor"
+      - "open source enthusiast"
+      - "open source lover"
+      - "aspiring open source"
+      - "open source developer"
+      - "contributing to open source"
+      - "hacktoberfest"
+      - "looking to contribute"
+      - "learning to code"
+      - "aspiring developer"
+    thresholds:
+      low_merged_max: 2    # ≤ 2 merged PRs  → strong suspicion
+      med_merged_max: 10    # ≤ 10            → mild
+      # > 10                              → not suspicious (real work)
+
+  activity_burstiness:
+    # bursty = many PRs within burst_span_hours; broad = across ≥ broad_repos repos
+    lookback_days: 30
+    sample_size: 30
+    thresholds:
+      min_count: 3          # fewer PRs → too little data, low score
+      burst_count: 5        # ≥ this many in window to consider bursty
+      burst_span_hours: 24  # all within this span → bursty
+      broad_repos: 3        # ≥ this many distinct repos → broad
+
+  # ---- optional LLM-powered signals ------------------------------------
+  # Each has a `provider`: off (default) | non_llm | llm
+  #   off      – signal disabled
+  #   non_llm  – pure-Python heuristic (no deps, no cost)
+  #   llm      – GitHub Models (requires llm.enabled + permissions: models: read)
+  # A provider: llm signal is skipped when llm.enabled is false.
+  related_work:
+    provider: "off"
+    thresholds:
+      low_overlap: 0.05     # token overlap ≤ this → high (unrelated work)
+      high_overlap: 0.25    # overlap ≥ this → low (clearly related / trusted)
+  contribution_rules:
+    provider: "off"          # only 'off' or 'llm' supported (non_llm needs an LLM)
+    contributing_path: "CONTRIBUTING.md"
+    template_path: ".github/PULL_REQUEST_TEMPLATE.md"
+
+  # ---- repo-fit & maintainer-burden signals (file-list / body based) ----
+  # These read the PR's changed-file list (one shared GET /pulls/{n}/files
+  # call) and/or the PR body already on the payload.
+
+  tests_included:
+    # does the PR add tests alongside code? (docs/config-only PRs are skipped)
+    test_patterns: []          # empty → use built-in defaults (test_*.py, *.test.js, tests/, …)
+    small_max_lines: 50        # untested change ≤ this → mild
+    med_max_lines: 300         # untested change ≤ this → medium
+    # above med_max_lines      → high (large untested change)
+
+  change_scope:
+    # sprawl across unrelated top-level directories (review burden)
+    thresholds:
+      low_max: 1              # ≤ 1 top-level area → focused
+      med_max: 2              # ≤ 2           → mild sprawl
+      high_max: 4             # ≤ 4           → high sprawl
+      # > high_max                          → very high
+
+  risky_paths:
+    # touches risky/critical areas (API, migrations, deps, CI/build/deploy,
+    # auth/security/payment/networking). Score scales with the number of
+    # DISTINCT risky groups touched. Leave `groups` unset to use built-ins.
+    # groups:                 # override / extend; see pras_bot/signals/risky_paths.py
+    #   dependencies: ["package.json", "requirements.txt"]
+    thresholds:
+      low_max: 0             # 0 risky groups → low burden
+      med_max: 2             # ≤ 2 groups → medium
+      high_max: 3           # ≤ 3 groups → high
+      # > high_max                         → very high
+
+  file_maintenance:
+    # touches vendored / generated / deprecated files (skip_patterns), plus
+    # an OPTIONAL active-maintenance recency check (off by default).
+    skip_patterns: []         # empty → use built-in defaults (vendor/, *.generated.*, *.pb.go, …)
+    check_recency: false      # true → fetch last-commit date per file (up to max_files calls)
+    stale_days: 365           # file untouched for > this many days → "stale"
+    max_files: 5              # cap on per-file recency lookups
+    thresholds:
+      low_max: 0.2           # ≤ 20% changed files are vendored/generated → mild
+      med_max: 0.5           # ≤ 50%               → medium
+      # > med_max                          → high
+
+  linked_issue:
+    # references an issue (#123, fixes #42, /issues/7) in title/body?
+    # no API call. small_max_lines: small fixes w/o an issue are only mild.
+    small_max_lines: 50
+
+  duplicate_work:
+    # exact-normalized-title match against existing PRs in THIS repo
+    # (distinct from duplicate_pr_titles, which is author-wide).
+    sample_size: 50           # how many recent repo PRs to compare against
+
+  signoff:
+    # DCO `Signed-off-by:` enforcement. OPT-IN: skipped unless required=true.
+    # (CLA status is NOT checked — use a dedicated CLA bot for that.)
+    required: false
+
+  # ---- optional LLM-powered repo-fit signals (off by default) ----
+  # Each has a `provider`: off (default) | non_llm | llm  (same model as
+  # related_work / contribution_rules). A provider: llm signal is skipped
+  # when llm.enabled is false.
+  pr_template:
+    # does the PR complete the PR template's ${VARIABLE} fill-in fields?
+    # template_path is relative to repo root.
+    provider: "off"
+    template_path: ".github/PULL_REQUEST_TEMPLATE.md"
+  scope_alignment:
+    # does the PR align with documented scope/roadmap/architecture?
+    # reference_docs: paths relative to repo root (missing ones are skipped).
+    provider: "off"
+    reference_docs:
+      - "ROADMAP.md"
+      - "ARCHITECTURE.md"
+    thresholds:
+      low_overlap: 0.05       # token overlap ≤ this → high (misaligned)
+      high_overlap: 0.2       # overlap ≥ this → low (on-scope / trusted)
+  pr_body_quality:
+    # is the PR body substantive or slop (empty / vague buzzwords)?
+    provider: "off"
+    vague_phrases: []         # empty → use built-in defaults ("improves maintainability", …)
+    short_min_chars: 50       # body shorter than this → thin
+    med_min_chars: 200        # body shorter than this → medium

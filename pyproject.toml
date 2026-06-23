@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pras-bot"
+version = "0.1.0"
+description = "PR Anti-Spam Bot — scores incoming PRs for spam signals and auto-labels them"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6",
+]
+
+[tool.setuptools]
+py-modules = []
+
+[tool.setuptools.packages.find]
+include = ["pras_bot", "pras_bot.signals"]
