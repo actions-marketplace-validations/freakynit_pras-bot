@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12,6 +14,54 @@ from typing import Any
 
 GRAPHQL_URL = "https://api.github.com/graphql"
 _SEARCH_URL = "https://api.github.com/search/issues"
+_GITHUB_RETRY_STATUS_CODES = {403, 429}
+_GITHUB_MAX_RETRIES = 3
+_GITHUB_RETRY_BASE_SECONDS = 1.0
+
+
+def _expect_dict(data: Any, context: str) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise TypeError(f"{context}: expected JSON object, got {type(data).__name__}")
+    return data
+
+
+def _expect_list(data: Any, context: str) -> list[Any]:
+    if not isinstance(data, list):
+        raise TypeError(f"{context}: expected JSON array, got {type(data).__name__}")
+    return data
+
+
+def _retry_delay(exc: urllib.error.HTTPError, attempt: int) -> float:
+    retry_after = exc.headers.get("Retry-After") if exc.headers else None
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            pass
+    return _GITHUB_RETRY_BASE_SECONDS * (2 ** attempt)
+
+
+def _github_urlopen_with_retries(
+    req: urllib.request.Request,
+    *,
+    timeout: int,
+    context: str,
+    max_retries: int = _GITHUB_MAX_RETRIES,
+) -> Any:
+    for attempt in range(max_retries + 1):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in _GITHUB_RETRY_STATUS_CODES or attempt >= max_retries:
+                raise
+            delay = _retry_delay(exc, attempt)
+            print(
+                f"⚠️  {context}: GitHub returned {exc.code}; "
+                f"retrying in {delay:.1f}s ({attempt + 1}/{max_retries})"
+            )
+            time.sleep(delay)
+
+    raise RuntimeError("unreachable retry state")
 
 
 class GitHubAPIError(RuntimeError):
@@ -58,7 +108,7 @@ class GitHubClient:
         self._pr_commits_cache: list[dict[str, Any]] | None = None
         self._repo_prs_cache: list[dict[str, Any]] | None = None
         self._file_commit_cache: dict[str, str] = {}
-        # LLM config (GitHub Models) — only used by NLP signals when enabled.
+        # LLM config — only used by NLP signals when enabled.
         self.llm_config: dict[str, Any] = llm_config or {}
 
     # ------------------------------------------------------------------
@@ -75,7 +125,7 @@ class GitHubClient:
     def _rest_get(self, url: str, timeout: int = 15) -> dict[str, Any] | list[Any]:
         req = urllib.request.Request(url, headers=self._rest_headers())
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with _github_urlopen_with_retries(req, timeout=timeout, context=f"REST GET {url}") as resp:
                 return json.load(resp)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode(errors="replace")
@@ -89,18 +139,17 @@ class GitHubClient:
         while True:
             page_url = f"{url}{separator}per_page={per_page}&page={page}"
             data = self._rest_get(page_url, timeout=timeout)
-            if not isinstance(data, list):
-                return items
+            data = _expect_list(data, f"REST GET {page_url}")
             items.extend(data)
             if len(data) < per_page:
                 return items
             page += 1
 
-    def _rest_post(self, url: str, body: dict[str, Any], timeout: int = 15) -> dict[str, Any]:
+    def _rest_post(self, url: str, body: dict[str, Any], timeout: int = 15) -> Any:
         data = json.dumps(body).encode()
         req = urllib.request.Request(url, data=data, headers=self._rest_headers(), method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with _github_urlopen_with_retries(req, timeout=timeout, context=f"REST POST {url}") as resp:
                 return json.load(resp)
         except urllib.error.HTTPError as exc:
             err_body = exc.read().decode(errors="replace")
@@ -109,7 +158,7 @@ class GitHubClient:
     def _rest_delete(self, url: str, timeout: int = 15) -> None:
         req = urllib.request.Request(url, headers=self._rest_headers(), method="DELETE")
         try:
-            with urllib.request.urlopen(req, timeout=timeout):
+            with _github_urlopen_with_retries(req, timeout=timeout, context=f"REST DELETE {url}"):
                 pass
         except urllib.error.HTTPError as exc:
             err_body = exc.read().decode(errors="replace")
@@ -131,15 +180,15 @@ class GitHubClient:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                result: dict[str, Any] = json.load(resp)
+            with _github_urlopen_with_retries(req, timeout=20, context="GraphQL POST") as resp:
+                result = _expect_dict(json.load(resp), "GraphQL response")
         except urllib.error.HTTPError as exc:
             err_body = exc.read().decode(errors="replace")
             raise RuntimeError(f"GraphQL error {exc.code}: {err_body}") from exc
 
         if "errors" in result:
             raise RuntimeError(f"GraphQL errors: {result['errors']}")
-        return result["data"]
+        return _expect_dict(result.get("data"), "GraphQL response data")
 
     # ------------------------------------------------------------------
     # Search helpers  (shared by several trust signals)
@@ -151,7 +200,7 @@ class GitHubClient:
             {"q": query, "per_page": "1"}, quote_via=urllib.parse.quote
         )
         data = self._rest_get(url)
-        assert isinstance(data, dict)
+        data = _expect_dict(data, f"REST GET {url}")
         return int(data.get("total_count", 0))
 
     def _search_issues_items(self, query: str, limit: int = 30) -> list[dict[str, Any]]:
@@ -160,7 +209,7 @@ class GitHubClient:
             {"q": query, "per_page": str(limit)}, quote_via=urllib.parse.quote
         )
         data = self._rest_get(url)
-        assert isinstance(data, dict)
+        data = _expect_dict(data, f"REST GET {url}")
         items = data.get("items", []) or []
         return [it for it in items if isinstance(it, dict)]
 
@@ -176,8 +225,7 @@ class GitHubClient:
         """
         url = f"{self._rest_base}/pulls/{self.pr_number}"
         data = self._rest_get(url)
-        assert isinstance(data, dict)
-        return data
+        return _expect_dict(data, f"REST GET {url}")
 
     def fetch_user_profile(self, username: str) -> dict[str, Any]:
         """Return the full user object (cached per client instance)."""
@@ -185,7 +233,7 @@ class GitHubClient:
             return self._user_cache[username]
         url = f"https://api.github.com/users/{urllib.parse.quote(username, safe='')}"
         data = self._rest_get(url)
-        assert isinstance(data, dict)
+        data = _expect_dict(data, f"REST GET {url}")
         self._user_cache[username] = data
         return data
 
@@ -261,8 +309,7 @@ class GitHubClient:
         """Return this repo's metadata (description, language, topics). Cached."""
         if self._repo_cache is None:
             data = self._rest_get(self._rest_base)   # GET /repos/{owner}/{repo}
-            assert isinstance(data, dict)
-            self._repo_cache = data
+            self._repo_cache = _expect_dict(data, f"REST GET {self._rest_base}")
         return self._repo_cache
 
     def fetch_file_text(self, path: str) -> str | None:
@@ -281,7 +328,7 @@ class GitHubClient:
                 self._file_cache[path] = None
                 return None
             raise
-        assert isinstance(data, dict)
+        data = _expect_dict(data, f"REST GET {url}")
         content = data.get("content", "") or ""
         if data.get("encoding") == "base64":
             text = base64.b64decode(content.replace("\n", "")).decode("utf-8", errors="replace")
@@ -347,7 +394,7 @@ class GitHubClient:
             + urllib.parse.urlencode({"path": path, "per_page": "1"})
         )
         data = self._rest_get(url)
-        items = data if isinstance(data, list) else []
+        items = _expect_list(data, f"REST GET {url}")
         date = ""
         if items:
             commit = items[0].get("commit", {}) or {}
@@ -360,14 +407,14 @@ class GitHubClient:
         return date
 
     def llm_judge(self, prompt: str, *, system: str | None = None) -> str:
-        """Call GitHub Models (OpenAI-compatible) and return the assistant text.
+        """Call the configured OpenAI-compatible chat-completions endpoint.
 
-        Requires the calling workflow to grant ``permissions: models: read``
-        and ``llm.enabled: true`` in config. Raises ``GitHubAPIError`` on HTTP
-        failure so signals can catch it and degrade to a neutral score.
+        Defaults to GitHub Models, authenticated with ``GITHUB_TOKEN``. Custom
+        OpenAI-compatible providers use ``llm.base_url`` and an API key read
+        from the env var named by ``llm.api_key_env``.
         """
         cfg = self.llm_config
-        endpoint = cfg.get("endpoint", "https://models.github.ai/inference/chat/completions")
+        endpoint, api_key, provider = self._llm_endpoint_and_key(cfg)
         model = cfg.get("model", "openai/gpt-4o-mini")
         temperature = cfg.get("temperature", 0.0)
         max_tokens = cfg.get("max_tokens", 5000)
@@ -390,23 +437,22 @@ class GitHubClient:
         req = urllib.request.Request(
             endpoint,
             data=payload,
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Accept": "application/vnd.github+json",
-                "Content-Type": "application/json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "pras-bot",
-            },
+            headers=self._llm_headers(provider, api_key),
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            open_url = (
+                _github_urlopen_with_retries(req, timeout=timeout, context=f"LLM POST {endpoint}")
+                if provider == "github_models"
+                else urllib.request.urlopen(req, timeout=timeout)
+            )
+            with open_url as resp:
                 data = json.load(resp)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode(errors="replace")
             raise GitHubAPIError(exc.code, f"LLM judge → {exc.code} {exc.reason}: {body}") from exc
 
-        assert isinstance(data, dict)
+        data = _expect_dict(data, f"LLM POST {endpoint}")
         choices = data.get("choices") or []
         if not choices:
             raise GitHubAPIError(500, f"LLM judge: empty choices in response: {data}")
@@ -414,6 +460,55 @@ class GitHubClient:
         if isinstance(content, list):  # some models return content parts
             content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
         return content if isinstance(content, str) else str(content)
+
+    def _llm_endpoint_and_key(self, cfg: dict[str, Any]) -> tuple[str, str, str]:
+        provider = str(cfg.get("provider", "github_models") or "github_models").strip().lower()
+        if provider in ("github", "github_models"):
+            endpoint = str(
+                cfg.get("endpoint")
+                or "https://models.github.ai/inference/chat/completions"
+            ).strip()
+            return endpoint, self.token, "github_models"
+
+        if provider not in ("openai", "openai_compatible"):
+            raise GitHubAPIError(400, f"LLM provider is unsupported: {provider}")
+
+        base_url = str(cfg.get("base_url", "") or "").strip()
+        if not base_url:
+            raise GitHubAPIError(400, "llm.base_url is required when llm.provider is openai_compatible")
+
+        api_key_env = str(cfg.get("api_key_env", "") or "").strip()
+        if not api_key_env:
+            raise GitHubAPIError(
+                400,
+                "llm.api_key_env is required when llm.provider is openai_compatible",
+            )
+
+        api_key = os.getenv(api_key_env, "").strip()
+        if not api_key:
+            raise GitHubAPIError(401, f"LLM API key env var {api_key_env} is missing or empty")
+
+        return self._join_openai_chat_endpoint(base_url), api_key, "openai_compatible"
+
+    @staticmethod
+    def _join_openai_chat_endpoint(base_url: str) -> str:
+        base = base_url.rstrip("/")
+        if base.endswith("/chat/completions"):
+            return base
+        return f"{base}/chat/completions"
+
+    @staticmethod
+    def _llm_headers(provider: str, api_key: str) -> dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "pras-bot",
+        }
+        if provider == "github_models":
+            headers["Accept"] = "application/vnd.github+json"
+            headers["X-GitHub-Api-Version"] = "2022-11-28"
+        return headers
 
     @staticmethod
     def _truncate_prompt(prompt: str, *, max_input_tokens: Any) -> str:
@@ -470,9 +565,13 @@ class GitHubClient:
         current_labels = self._rest_get(
             f"{self._rest_base}/issues/{self.pr_number}/labels"
         )
-        assert isinstance(current_labels, list)
+        current_labels = _expect_list(
+            current_labels,
+            f"REST GET {self._rest_base}/issues/{self.pr_number}/labels",
+        )
         for lbl in current_labels:
-            assert isinstance(lbl, dict)
+            if not isinstance(lbl, dict):
+                raise TypeError(f"PR labels response: expected label object, got {type(lbl).__name__}")
             name = lbl.get("name", "")
             if name in bot_names and name != keep:
                 self._rest_delete(

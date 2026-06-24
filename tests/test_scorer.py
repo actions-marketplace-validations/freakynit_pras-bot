@@ -15,7 +15,7 @@ import pytest
 import yaml
 
 from pras_bot.github_client import GitHubAPIError, GitHubClient
-from pras_bot.config_loader import _deep_merge
+from pras_bot.config_loader import _deep_merge, load_config
 from pras_bot.scorer import compute_spam_score, compute_labels_from_score
 from pras_bot.signals.lines_changed import LinesChangedSignal
 from pras_bot.signals.files_changed import FilesChangedSignal
@@ -141,6 +141,31 @@ class TestConfigMerge:
         assert base == {"a": {"b": 1}, "c": [1]}
         assert override == {"a": {"d": 2}, "c": [2]}
 
+    def test_local_config_path_skips_repo_config_fetch(self, tmp_path, monkeypatch):
+        local_config = tmp_path / "pras-bot.yml"
+        local_config.write_text("comment: false\n", encoding="utf-8")
+
+        def fail_fetch(token, repo_full):
+            raise AssertionError("repo config should not be fetched when local path is explicit")
+
+        monkeypatch.setattr("pras_bot.config_loader._fetch_repo_config", fail_fetch)
+        config = load_config(str(local_config), "tok", "o/r")
+
+        assert config["comment"] is False
+
+    def test_missing_local_config_fetches_default_repo_config(self, monkeypatch):
+        calls = []
+
+        def fake_fetch(token, repo_full):
+            calls.append((token, repo_full))
+            return {"comment": False}
+
+        monkeypatch.setattr("pras_bot.config_loader._fetch_repo_config", fake_fetch)
+        config = load_config(None, "tok", "o/r")
+
+        assert calls == [("tok", "o/r")]
+        assert config["comment"] is False
+
 
 # ---------------------------------------------------------------------------
 # signal unit tests (pure logic, no API calls)
@@ -189,7 +214,7 @@ class TestFilesChanged:
     def test_single_file(self):
         sig = FilesChangedSignal(None, DEFAULT_CONFIG, {"changed_files": 1})
         s = sig.score()
-        assert 20 <= s <= 40
+        assert s == 15.0
 
     def test_many_files(self):
         sig = FilesChangedSignal(None, DEFAULT_CONFIG, {"changed_files": 20})
@@ -723,7 +748,7 @@ class TestExtractFirstJson:
 
 
 # ---------------------------------------------------------------------------
-# LLM client (GitHub Models) — mocked HTTP
+# LLM client — mocked HTTP
 # ---------------------------------------------------------------------------
 
 class _FakeResp:
@@ -745,6 +770,48 @@ def _json_resp(payload):
 
 
 class TestLLMJudge:
+    def test_rest_get_retries_429_then_succeeds(self, monkeypatch):
+        calls = []
+        sleeps = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(req.full_url)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(
+                    req.full_url, 429, "Too Many Requests", {"Retry-After": "0.25"}, io.BytesIO(b"rate")
+                )
+            return _json_resp({"ok": True})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        monkeypatch.setattr("time.sleep", lambda delay: sleeps.append(delay))
+
+        gh = GitHubClient("tok", "o", "r", 1, None, {})
+
+        assert gh._rest_get("https://api.github.com/repos/o/r") == {"ok": True}
+        assert calls == ["https://api.github.com/repos/o/r", "https://api.github.com/repos/o/r"]
+        assert sleeps == [0.25]
+
+    def test_rest_get_retries_403_with_exponential_backoff(self, monkeypatch):
+        calls = []
+        sleeps = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(req.full_url)
+            if len(calls) < 3:
+                raise urllib.error.HTTPError(
+                    req.full_url, 403, "Forbidden", {}, io.BytesIO(b"secondary rate limit")
+                )
+            return _json_resp({"ok": True})
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        monkeypatch.setattr("time.sleep", lambda delay: sleeps.append(delay))
+
+        gh = GitHubClient("tok", "o", "r", 1, None, {})
+
+        assert gh._rest_get("https://api.github.com/repos/o/r") == {"ok": True}
+        assert len(calls) == 3
+        assert sleeps == [1.0, 2.0]
+
     def test_returns_assistant_content_and_uses_config(self, monkeypatch):
         captured: dict = {}
 
@@ -763,6 +830,91 @@ class TestLLMJudge:
         assert body["temperature"] == 0.0
         assert body["max_tokens"] == 5000
         assert body["messages"] == [{"role": "user", "content": "hi"}]
+        assert captured["req"].full_url == "https://models.github.ai/inference/chat/completions"
+        assert captured["req"].get_header("Authorization") == "Bearer tok"
+        assert captured["req"].get_header("X-github-api-version") == "2022-11-28"
+
+    def test_openai_compatible_provider_uses_base_url_and_env_key(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["req"] = req
+            captured["timeout"] = timeout
+            return _json_resp({"choices": [{"message": {"content": '{"score": 10}'}}]})
+
+        monkeypatch.setenv("PRAS_BOT_LLM_API_KEY", "custom-key")
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+        gh = GitHubClient(
+            "github-token",
+            "o",
+            "r",
+            1,
+            None,
+            {
+                "provider": "openai_compatible",
+                "base_url": "https://llm.example.com/v1",
+                "api_key_env": "PRAS_BOT_LLM_API_KEY",
+                "model": "custom-model",
+                "timeout": 12,
+            },
+        )
+        assert gh.llm_judge("hi") == '{"score": 10}'
+
+        body = json.loads(captured["req"].data)
+        assert captured["req"].full_url == "https://llm.example.com/v1/chat/completions"
+        assert captured["req"].get_header("Authorization") == "Bearer custom-key"
+        assert captured["req"].get_header("Accept") == "application/json"
+        assert captured["req"].get_header("X-github-api-version") is None
+        assert captured["timeout"] == 12
+        assert body["model"] == "custom-model"
+
+    def test_openai_compatible_accepts_full_chat_completions_url(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["url"] = req.full_url
+            return _json_resp({"choices": [{"message": {"content": "ok"}}]})
+
+        monkeypatch.setenv("LLM_KEY", "custom-key")
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        gh = GitHubClient(
+            "tok",
+            "o",
+            "r",
+            1,
+            None,
+            {
+                "provider": "openai_compatible",
+                "base_url": "https://llm.example.com/v1/chat/completions",
+                "api_key_env": "LLM_KEY",
+            },
+        )
+        gh.llm_judge("hi")
+        assert captured["url"] == "https://llm.example.com/v1/chat/completions"
+
+    def test_openai_compatible_missing_key_env_raises_before_http(self, monkeypatch):
+        monkeypatch.delenv("MISSING_LLM_KEY", raising=False)
+
+        def fake_urlopen(req, timeout=None):
+            raise AssertionError("urlopen should not be called")
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        gh = GitHubClient(
+            "tok",
+            "o",
+            "r",
+            1,
+            None,
+            {
+                "provider": "openai_compatible",
+                "base_url": "https://llm.example.com/v1",
+                "api_key_env": "MISSING_LLM_KEY",
+            },
+        )
+        with pytest.raises(GitHubAPIError) as ei:
+            gh.llm_judge("hi")
+        assert ei.value.status_code == 401
 
     def test_prompt_is_capped_but_tail_instruction_survives(self, monkeypatch):
         captured: dict = {}
@@ -800,6 +952,7 @@ class TestLLMJudge:
             )
 
         monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        monkeypatch.setattr("time.sleep", lambda delay: None)
         gh = GitHubClient("tok", "o", "r", 1, None, {})
         with pytest.raises(GitHubAPIError) as ei:
             gh.llm_judge("hi")

@@ -19,26 +19,73 @@ from ._paths import matches_any
 
 # Default test-file / test-dir patterns. Matched by full path OR path segment.
 _DEFAULT_TEST_PATTERNS = [
+    # Python
     "test_*.py",            # test_foo.py
     "*_test.py",            # foo_test.py
     "test.py",
+    "conftest.py",
+
+    # JS/TS
+    "*.test.js", "*.test.ts", "*.test.jsx", "*.test.tsx",
+    "*.spec.js", "*.spec.ts", "*.spec.jsx", "*.spec.tsx",
+    "__tests__",
+    "cypress",
+    "playwright",
+
+    # Go
+    "*_test.go",
+
+    # Rust
+    "*_test.rs",
+
+    # JVM (Java/Kotlin/Scala)
+    "*Test.java", "*Tests.java", "*TestCase.java", "*IT.java",
+    "*Test.kt", "*Tests.kt",
+    "*Test.scala", "*Spec.scala",
+    "*.test.kts",
+
+    # .NET
+    "*Test.cs", "*Tests.cs", "*.Tests.cs",
+
+    # Ruby
+    "*_spec.rb", "*_test.rb", "spec_helper.rb",
+
+    # PHP
+    "*Test.php", "*_test.php",
+
+    # C/C++
+    "*_test.cc", "*_test.cpp", "*Test.cpp", "test_*.cc", "test_*.cpp",
+
+    # Swift
+    "*Tests.swift", "*Test.swift",
+
+    # Elixir
+    "*_test.exs",
+
+    # Haskell
+    "*Spec.hs",
+
+    # Dart/Flutter
+    "*_test.dart",
+
+    # Shell
+    "*.bats",
+    "*_test.sh",
+
+    # BDD/Gherkin (cucumber, behave, etc.)
+    "*.feature",
+
+    # Generic dirs/segments
     "tests",
     "test",
-    "__tests__",
+    "testing",
     "spec",
     "specs",
-    "*.test.js",
-    "*.test.ts",
-    "*.test.jsx",
-    "*.test.tsx",
-    "*.spec.js",
-    "*.spec.ts",
-    "*.spec.jsx",
-    "*.spec.tsx",
-    "*_test.go",
-    "*_test.rs",
-    "*.bats",
-    "*.test.kts",
+    "e2e",
+    "e2e-tests",
+    "integration",
+    "integration-tests",
+    "unit-tests",
 ]
 
 

@@ -1,2 +1,16 @@
 pras_bot.egg-info
 **/DS_Store
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.eggs/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/

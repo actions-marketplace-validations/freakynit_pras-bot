@@ -14,7 +14,7 @@ Provider choice (config: ``signals.pr_template.provider``):
   off      – signal disabled (default)
   non_llm  – pure-Python: count unfilled ``${VARIABLE}`` placeholders and
              missing section headers in the PR body. No cost.
-  llm      – GitHub Models judges how well the template was completed.
+  llm      – configured LLM provider judges how well the template was completed.
 
 Covers:
   * "Completes the PR template properly"      (positive)

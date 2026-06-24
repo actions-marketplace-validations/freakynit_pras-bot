@@ -5,8 +5,8 @@ description, no tests, wrong format, …) is a mild negative signal.
 
 Provider choice (config: ``signals.contribution_rules.provider``):
   off   – signal disabled (default)
-  llm   – GitHub Models judges adherence against ``CONTRIBUTING.md`` (or the
-          PR template). Costs money/quota.
+  llm   – configured LLM provider judges adherence against ``CONTRIBUTING.md``
+          (or the PR template). Costs money/quota.
 
   ``non_llm`` is **not** supported — interpreting free-form rules needs an
   LLM. If set, the signal is skipped with a warning.

@@ -14,8 +14,8 @@ Provider choice (config: ``signals.scope_alignment.provider``):
   off      – signal disabled (default)
   non_llm  – token-overlap (Jaccard) between the PR title+body and the
              reference docs. Pure Python, no cost.
-  llm      – GitHub Models judges whether the PR fits the documented scope.
-             Costs money/quota.
+  llm      – configured LLM provider judges whether the PR fits the documented
+             scope. Costs money/quota.
 
 Covers:
   * "Respects project scope and roadmap"           (positive)

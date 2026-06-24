@@ -8,7 +8,7 @@ Provider choice (config: ``signals.related_work.provider``):
   off      – signal disabled (default)
   non_llm  – token-overlap (Jaccard) between the repo description/topics and
              the author's recent PR titles. Pure Python, no dependencies.
-  llm      – GitHub Models judges topical relatedness. Costs money/quota.
+  llm      – configured LLM provider judges topical relatedness. Costs money/quota.
 
 Covers:
   * "Has relevant merged PRs in similar projects"
@@ -61,7 +61,7 @@ class RelatedWorkSignal(ScoredSignal):
             return 15.0                  # clearly related → low (trusted)
         return linear(overlap, low, high, 70.0, 15.0)
 
-    # -- LLM: ask GitHub Models ------------------------------------------
+    # -- LLM: ask configured provider ------------------------------------
 
     def _score_llm(self, username: str) -> float:
         repo = self.gh.fetch_repo_info()

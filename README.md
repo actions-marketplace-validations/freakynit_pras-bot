@@ -21,17 +21,25 @@ checklist items each one covers, see 👉 **[`SIGNALS.md`](SIGNALS.md)**.
 ### Optional: LLM-powered signals (cost money)
 
 Six signals — `related_work`, `contribution_rules`, `diff_credibility`,
-`pr_template`, `scope_alignment`, and `pr_body_quality` — can use GitHub Models (an LLM)
+`pr_template`, `scope_alignment`, and `pr_body_quality` — can use an LLM
 for natural-language judgment (topic relevance, rule adherence, template
 completion, scope/roadmap alignment, body-quality / slop detection).
 They're **off by default**. Each has a `provider` (`off` / `non_llm` / `llm`)
 so you choose cost vs. accuracy per signal — `non_llm` is a free
-pure-Python heuristic, `llm` calls GitHub Models. (`contribution_rules`
+pure-Python heuristic, `llm` calls the configured LLM provider. (`contribution_rules`
 supports `off`/`llm` only.) To enable the LLM path:
 
-1. Uncomment `models: read` in your workflow `permissions:` (above).
+1. Uncomment `models: read` in your workflow `permissions:` (above) when using
+   the default GitHub Models provider.
 2. In `.github/pras-bot.yml` set `llm.enabled: true` and `provider: llm` on
    the signals you want.
+
+GitHub Models remains the default LLM provider. You can also point the bot at
+any OpenAI-compatible chat-completions endpoint by setting
+`llm.provider: openai_compatible`, `llm.base_url`, and `llm.api_key_env`. The
+API key value is read from that environment variable at runtime, so pass it
+from a GitHub secret or variable in your workflow instead of hardcoding it in
+`.github/pras-bot.yml`.
 
 ### Reference docs for NLP signals (configurable paths)
 
@@ -88,7 +96,7 @@ permissions:
   pull-requests: write
   issues: write        # for labelling
   contents: read
-  # models: read      # ONLY if you enable the optional LLM signals (see SIGNALS.md)
+  # models: read      # ONLY for optional LLM signals using the default GitHub Models provider
 
 jobs:
   pras-bot:
@@ -97,8 +105,12 @@ jobs:
       - uses: your-org/pras-bot@v1   # after publishing to marketplace
         # OR during development:
         # uses: ./pras-bot
-        with:
-          config_path: ".github/pras-bot.yml"    # optional
+        # Optional: use a non-default checked-out config file.
+        # with:
+        #   config_path: "docs/pras-bot.yml"
+        # Required only for llm.provider: openai_compatible:
+        # env:
+        #   PRAS_BOT_LLM_API_KEY: ${{ secrets.PRAS_BOT_LLM_API_KEY }}
 ```
 
 > **Important:** Use `pull_request_target` NOT `pull_request` so the
@@ -154,6 +166,16 @@ labels:
 
 comment: true   # post a scorecard comment on the PR
 
+# Optional LLM settings. Defaults to GitHub Models, authenticated with
+# GITHUB_TOKEN, when llm.enabled is true.
+llm:
+  enabled: false
+  provider: github_models        # github_models (default) or openai_compatible
+  model: "openai/gpt-4o-mini"
+  # For provider: openai_compatible:
+  # base_url: "https://api.openai.com/v1"
+  # api_key_env: "PRAS_BOT_LLM_API_KEY"
+
 signals:
   account_age:
     thresholds:
@@ -197,6 +219,9 @@ signals:
 ```
 
 If you **don't** add a config, the [built-in defaults](config/default_config.yml) are used.
+Config dictionaries are merged recursively over the defaults. Lists are
+replaced as whole values, not appended or merged item-by-item, so list
+overrides should include the complete desired list.
 
 ## How scoring works
 

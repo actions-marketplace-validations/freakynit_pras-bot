@@ -8,7 +8,7 @@ verification. A real PR explains what changed, why, and how it was verified.
 Provider choice (config: ``signals.pr_body_quality.provider``):
   off      – signal disabled (default)
   non_llm  – body length + count of configured vague phrases. No cost.
-  llm      – GitHub Models judges slop / vagueness / shallowness.
+  llm      – configured LLM provider judges slop / vagueness / shallowness.
 
 Covers:
   * "PR body explains what changed, why, and how it was verified"  (positive)

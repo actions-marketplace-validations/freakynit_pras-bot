@@ -4,9 +4,8 @@ author: "pras-bot"
 
 inputs:
   config_path:
-    description: "Path to a YAML config file inside the repo (default: .github/pras-bot.yml)"
+    description: "Optional path to a YAML config file in the checked-out repo. If omitted, .github/pras-bot.yml is fetched via the GitHub API."
     required: false
-    default: ".github/pras-bot.yml"
 
 runs:
   using: "composite"

@@ -7,7 +7,8 @@ and asks it to compare the claims against the actual changed lines.
 
 Provider choice (config: ``signals.diff_credibility.provider``):
   off   – signal disabled (default)
-  llm   – GitHub Models judges claim-vs-diff credibility. Costs money/quota.
+  llm   – configured LLM provider judges claim-vs-diff credibility.
+          Costs money/quota.
 
   ``non_llm`` is **not** supported — matching natural-language claims to a
   code diff needs an LLM.

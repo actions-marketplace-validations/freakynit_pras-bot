@@ -1,5 +1,7 @@
 # PR Anti-Spam Bot — Default Configuration
 # Override by placing .github/pras-bot.yml in your repository.
+# Dict values are merged recursively over these defaults. List values are
+# replaced as whole lists, not appended or merged item-by-item.
 
 # ---------------------------------------------------------------------------
 # signal weights  (each weight ≥ 0; final spam score is weight * signal_score)
@@ -58,19 +60,29 @@ labels:
 comment: true
 
 # ---------------------------------------------------------------------------
-# LLM-powered signals (OPTIONAL — uses GitHub Models, costs money/quota)
+# LLM-powered signals (OPTIONAL — uses GitHub Models by default, costs money/quota)
 #
 # To enable:
-#   1. add `permissions: models: read` to your workflow YAML
+#   1. add `permissions: models: read` to your workflow YAML when using
+#      the default GitHub Models provider
 #   2. set llm.enabled: true below
 #   3. on each NLP signal set provider: llm (or non_llm where supported)
 # When llm.enabled is false, every provider: llm signal is silently skipped
 # (excluded from the score) rather than biasing it toward a neutral 50.
+#
+# To use a custom OpenAI-compatible endpoint instead of GitHub Models:
+#   provider: "openai_compatible"
+#   base_url: "https://api.openai.com/v1"   # /chat/completions is appended
+#   api_key_env: "PRAS_BOT_LLM_API_KEY"     # env var containing the API key
+# Then expose that env var in your workflow from a GitHub secret/variable.
 # ---------------------------------------------------------------------------
 llm:
   enabled: false
+  provider: "github_models"              # github_models (default) | openai_compatible
   model: "openai/gpt-4o-mini"          # any model from github.com/marketplace/models
   endpoint: "https://models.github.ai/inference/chat/completions"
+  base_url: ""                          # for provider: openai_compatible, e.g. https://api.openai.com/v1
+  api_key_env: ""                       # for provider: openai_compatible, env var that holds the API key
   temperature: 0.0                       # 0 = deterministic
   max_input_tokens: 50000                # rough prompt cap before sending to the model
   max_tokens: 5000                       # output token cap
@@ -205,7 +217,7 @@ signals:
   # Each has a `provider`: off (default) | non_llm | llm
   #   off      – signal disabled
   #   non_llm  – pure-Python heuristic (no deps, no cost)
-  #   llm      – GitHub Models (requires llm.enabled + permissions: models: read)
+  #   llm      – configured LLM provider (requires llm.enabled)
   # A provider: llm signal is skipped when llm.enabled is false.
   related_work:
     provider: "off"

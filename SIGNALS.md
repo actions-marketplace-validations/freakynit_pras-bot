@@ -30,7 +30,7 @@ score when all are on). *API* = extra GitHub API calls per PR run.
 | Signal                  | Category           | Weight | Share  | What it measures                                          | API calls |
 |-------------------------|--------------------|:------:|:------:|-----------------------------------------------------------|:---------:|
 | `lines_changed`         | PR-shape           | 1.0    | 4.5%   | Added + deleted lines (too few *or* too many)            | 0         |
-| `files_changed`         | PR-shape           | 1.0    | 4.5%   | Number of modified files (single-file drive-by)           | 0         |
+| `files_changed`         | PR-shape           | 1.0    | 4.5%   | Number of modified files (broad file-count changes)       | 0         |
 | `account_age`           | PR-shape           | 1.5    | 6.7%   | How old the author's GitHub account is                    | 1 †       |
 | `cross_repo_prs`        | PR-shape           | 2.0    | 9.0%   | PRs by the author across all repos in last 7 days         | 1 search  |
 | `association`           | Contributor-trust  | 1.5    | 6.7%   | Author's repo role (owner/member/collaborator vs first-timer) | 0      |
@@ -60,13 +60,13 @@ call.
 †† `tests_included`, `change_scope`, `risky_paths`, and `file_maintenance`
 **share one** cached `GET /pulls/{n}/files` call.
 ‡ `related_work` adds one cached `GET /repos/{o}/{r}` + one search; with
-`provider: llm` it also calls GitHub Models (see below).
+`provider: llm` it also calls the configured LLM provider (see below).
 § `signoff` only makes the commits fetch when `signoff.required: true` (opt-in).
 The six LLM signals are **off by default** and excluded from the score
 unless enabled; `signoff` is skipped unless opted in.
 
 Default per PR: 1 user lookup + 1 shared file-list fetch + ~10 search
-requests. With LLM signals on, add GitHub Models calls; with `signoff`
+requests. With LLM signals on, add configured LLM provider calls; with `signoff`
 or `file_maintenance.check_recency` on, add commits lookups.
 
 ---
@@ -94,9 +94,9 @@ Input = number of modified files.
 | Files changed | Raw score |
 |---------------|:---------:|
 | 0             | 100       |
-| 1 – 3 (`low_max`)   | 40 → 20 (linear) |
-| 4 – 10 (`med_max`)  | 20 → 10 (linear) |
-| > 10          | 10 → 100 (`min(100, 10 + (n−10)·6)`) |
+| 1 – 3 (`low_max`)   | 15 → 10 (linear) |
+| 4 – 10 (`med_max`)  | 10 → 20 (linear) |
+| > 10          | 20 → 100 (`min(100, 20 + (n−10)·6)`) |
 
 ### `account_age` — weight 1.5
 
@@ -384,17 +384,19 @@ control of cost:
 |----------------------|------------------------------------------------------|
 | `off` (default)      | Signal disabled — excluded from the score entirely |
 | `non_llm`            | Pure-Python heuristic (no dependencies, no API cost) |
-| `llm`                | GitHub Models (an LLM). **Costs money / quota.** |
+| `llm`                | Configured OpenAI-compatible LLM provider. **Costs money / quota.** |
 
 ### Enabling the LLM path
 
-1. Add `permissions: models: read` to your workflow (see [README](README.md)).
+1. Add `permissions: models: read` to your workflow when using the default
+   GitHub Models provider (see [README](README.md)).
 2. Set `llm.enabled: true` in `.github/pras-bot.yml`.
 3. Set `provider: llm` on the signals you want.
 
 ```yaml
 llm:
   enabled: true
+  provider: github_models        # github_models (default) or openai_compatible
   model: "openai/gpt-4o-mini"   # github.com/marketplace/models
   temperature: 0.0               # 0 = deterministic
   max_input_tokens: 50000        # rough prompt cap before sending
@@ -421,6 +423,23 @@ signals:
     provider: non_llm     # or llm / off (default)
 ```
 
+To use a custom OpenAI-compatible provider, set `llm.provider` to
+`openai_compatible`, provide the provider's base URL, and name the environment
+variable that contains the API key:
+
+```yaml
+llm:
+  enabled: true
+  provider: openai_compatible
+  model: "gpt-4o-mini"
+  base_url: "https://api.openai.com/v1"
+  api_key_env: "PRAS_BOT_LLM_API_KEY"
+```
+
+Expose `PRAS_BOT_LLM_API_KEY` in the workflow from a GitHub secret or
+repository/environment variable. The key value should not be committed to the
+config file.
+
 If `llm.enabled` is `false`, any `provider: llm` signal is **silently
 skipped** (dropped from the average) — it never biases the score toward a
 neutral 50. The same happens on any API/parse error (degrades to neutral 50).
@@ -441,7 +460,7 @@ history consistent with the repo's ecosystem."*
 | `provider` | How it scores |
 |------------|------------------------------------------------------|
 | `non_llm`  | Token-overlap (Jaccard) between the repo description/topics/language and the author's recent PR titles. |
-| `llm`      | GitHub Models judges topical relatedness from the same inputs. |
+| `llm`      | The configured LLM provider judges topical relatedness from the same inputs. |
 
 | Token overlap (`non_llm`) | Raw score |
 |---------------------------|:---------:|
@@ -502,7 +521,7 @@ its fill-in fields were completed.
 | `provider` | How it scores |
 |------------|------------------------------------------------------|
 | `non_llm`  | Extracts `${VARIABLE}` placeholders (and `##` sections) from the template and checks the PR body for unfilled ones. |
-| `llm`      | GitHub Models judges how completely the template was filled. |
+| `llm`      | The configured LLM provider judges how completely the template was filled. |
 
 | Situation | Raw score (`non_llm`) |
 |-----------|:---------:|
@@ -528,7 +547,7 @@ reference docs (`reference_docs`, repo-relative; defaults to `ROADMAP.md` and
 | `provider` | How it scores |
 |------------|------------------------------------------------------|
 | `non_llm`  | Token-overlap (Jaccard) between the PR title+body and the reference docs. |
-| `llm`      | GitHub Models judges alignment from the docs, title/body, and bounded selected patches when available. |
+| `llm`      | The configured LLM provider judges alignment from the docs, title/body, and bounded selected patches when available. |
 
 | Token overlap (`non_llm`) | Raw score |
 |---------------------------|:---------:|
@@ -550,7 +569,7 @@ reference doc; `vague_phrases` is a configurable list.
 | `provider` | How it scores |
 |------------|------------------------------------------------------|
 | `non_llm`  | Body length bucket + count of `vague_phrases` present. |
-| `llm`      | GitHub Models judges slop / vagueness / concreteness. |
+| `llm`      | The configured LLM provider judges slop / vagueness / concreteness. |
 
 | Body (`non_llm`) | Raw score |
 |------------------|:---------:|
