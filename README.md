@@ -223,6 +223,22 @@ Config dictionaries are merged recursively over the defaults. Lists are
 replaced as whole values, not appended or merged item-by-item, so list
 overrides should include the complete desired list.
 
+### 3: (Optional) Create a PR template (for the `pr_template` signal)
+
+1. Create `.github/PULL_REQUEST_TEMPLATE.md` with `${VARIABLE}` placeholders if you want the bot to check template completion:
+2. Checkout `template_path` config variable under `pr_template` config key.
+
+```markdown
+## Summary
+${SUMMARY}
+
+## Why
+${WHY}
+
+## Testing
+${TESTING}
+```
+
 ## How scoring works
 
 1. Every signal computes a **raw score** ∈ [0, 100]
