@@ -1,11 +1,49 @@
 # PRAS Bot — PR Anti-Spam Bot
 
-**GitHub Action that scores every incoming PR for spam signals and auto-labels it.**
+**PRAS Bot is a GitHub Action that helps maintainers spot suspicious pull
+requests before spending review time on them.**
 
-Think of it as a first-line triage filter. It doesn't close PRs automatically — it
-labels them so maintainers can decide what deserves attention.
+> Especially more relevant today when many prominent repos are suffering from a flood of LLM-generated PR's.
 
-## Signals
+It runs when a PR is opened or updated, checks the PR against spam and
+low-quality contribution signals, and applies one clear label:
+
+- `likely-spam` for high-risk PRs
+- `needs-review` for PRs that look suspicious enough to inspect manually
+- `looks-good` for PRs that pass the automated checks
+
+PRAS Bot can also post a scorecard comment showing why the label was applied.
+It does **not** close PRs, reject contributors, or make final moderation
+decisions. It is a first-pass triage filter that helps maintainers decide where
+to spend attention.
+
+## What it looks like
+
+Here are a few real PR's where PRAS Bot has already run:
+1. [`freakynit/whissle-ai-nodejs-sdk#2`](https://github.com/freakynit/whissle-ai-nodejs-sdk/pull/2)
+2. [`freakynit/whissle-ai-nodejs-sdk#3`](https://github.com/freakynit/whissle-ai-nodejs-sdk/pull/3)
+
+In these examples, the bot posted a scorecard comment with the per-signal scores
+and applied the `needs-review` label.
+
+## How it works at a glance
+
+1. A contributor opens or updates a PR.
+2. PRAS Bot reads PR metadata, changed files, contributor history, and optional
+   repo documents such as `CONTRIBUTING.md` or a PR template.
+3. Each enabled signal returns a score from `0` to `100`.
+4. The weighted final score is mapped to exactly one label.
+5. If enabled, the bot comments on the PR with a scorecard so maintainers can
+   see why the label was applied.
+
+## When this is useful
+
+Use PRAS Bot when your repo receives drive-by PRs, low-effort automated changes,
+AI-generated contribution spam, or repeated PRs from accounts with little repo
+context. It is especially useful for public repositories where maintainers want
+consistent triage without giving the bot authority to close PRs.
+
+## Detailed scoring signals
 
 Every incoming PR is scored **0–100** (0 = legit, 100 = spam) from a
 weighted average of **25 signals** — 4 *PR-shape*, 8 *contributor-trust*,
