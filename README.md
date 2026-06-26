@@ -340,3 +340,7 @@ Create a `test_fixtures/pr_opened.json` file with a sample GitHub webhook payloa
   (`check_recency: true`) are **opt-in** and add 1 commits fetch / up to
   `max_files` per-file commit lookups respectively.
 - The action runs on `pull_request_target` so it has access to repo-level secrets.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
