@@ -15,4 +15,7 @@ dependencies = [
 py-modules = []
 
 [tool.setuptools.packages.find]
-include = ["pras_bot", "pras_bot.signals"]
+include = ["pras_bot", "pras_bot.*"]
+
+[tool.setuptools.package-data]
+pras_bot = ["config/*.yml"]

@@ -5,14 +5,12 @@ from __future__ import annotations
 import base64
 import copy
 import json
-from pathlib import Path
+from importlib import resources
 from typing import Any
 
 import yaml
 
 from .github_client import _expect_dict, _github_urlopen_with_retries
-
-_DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "default_config.yml"
 
 
 def _fetch_repo_config(token: str, repo_full: str) -> dict[str, Any] | None:
@@ -69,8 +67,8 @@ def load_config(
       * `.github/pras-bot.yml` fetched from the repo when no local path is set.
     """
     # 1. base defaults
-    with open(_DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
-        config: dict[str, Any] = yaml.safe_load(f) or {}
+    default_config = resources.files("pras_bot.config").joinpath("default_config.yml")
+    config: dict[str, Any] = yaml.safe_load(default_config.read_text(encoding="utf-8")) or {}
 
     if local_path:
         with open(local_path, encoding="utf-8") as f:
